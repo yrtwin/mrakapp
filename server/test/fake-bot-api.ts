@@ -6,6 +6,8 @@ export interface Call { method: string; body: Record<string, any>; test: boolean
 
 export async function startFakeBotApi() {
   const calls: Call[] = [];
+  const failures: Record<string, object[]> = {}; // method → queued Bot API errors, e.g. a 429 with retry_after
+  const slow: Record<string, number> = {}; // method → ms to wait before answering
   const now = () => Math.floor(Date.now() / 1000);
   let mid = 100;
   const handlers: Record<string, (b: Record<string, any>) => unknown> = {
@@ -37,6 +39,9 @@ export async function startFakeBotApi() {
       body.__multipart = raw.length;
     }
     calls.push({ method, body, test: !!test });
+    if (slow[method]) await new Promise((r) => setTimeout(r, slow[method]));
+    const failure = failures[method]?.shift();
+    if (failure) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: false, ...failure })); return; }
     const result = handlers[method] ? handlers[method](body) : true;
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ ok: true, result }));
@@ -47,6 +52,8 @@ export async function startFakeBotApi() {
     url: `http://127.0.0.1:${port}`,
     calls,
     of: (method: string) => calls.filter((c) => c.method === method),
+    failNext: (method: string, error: { error_code: number; description: string; parameters?: object }) => (failures[method] ??= []).push(error),
+    slow,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
 }

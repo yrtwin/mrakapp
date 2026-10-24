@@ -254,7 +254,8 @@ export const adminRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
     const list = await db.select().from(orders).orderBy(desc(orders.createdAt)).limit(10000);
     const items = list.length ? await db.select().from(orderItems).where(inArray(orderItems.orderId, list.map((o) => o.id))) : [];
     const head = ['case', 'status', 'created_at', 'paid_at', 'subject', 'telegram_id', 'name', 'phone', 'delivery', 'address', 'items', 'items_total', 'delivery_price', 'total', 'track', 'telegram_charge_id', 'provider_charge_id', 'comment'];
-    const cell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    // a leading = + - @ (or tab/CR) makes Excel run the cell as a formula: names and comments come from customers
+    const cell = (v: unknown) => `"${String(v ?? '').replace(/^[=+\-@\t\r]/, "'$&").replace(/"/g, '""')}"`;
     const rows = list.map((o) => [o.no, ORDER_STATUS_LABEL[o.status], o.createdAt.toISOString(), o.paidAt?.toISOString() ?? '', o.subjectNo, o.userId, o.name, o.phone, o.deliveryTitle, o.address, items.filter((i) => i.orderId === o.id).map((i) => `${i.title} / ${i.sizeLabel} ×${i.qty}`).join('; '), o.itemsTotal, o.deliveryPrice, o.total, o.trackNo, o.telegramChargeId, o.providerChargeId, o.comment].map(cell).join(';'));
     return '\uFEFF' + [head.join(';'), ...rows].join('\r\n');
   };

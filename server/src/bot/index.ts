@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard, InputFile } from 'grammy';
+import { Bot, GrammyError, InlineKeyboard, InputFile } from 'grammy';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { eq, and, isNull } from 'drizzle-orm';
 import { deepLink, formatRub, subjectNo } from '@mrak8/shared';
@@ -145,16 +145,28 @@ export async function notifyDrop(deps: BotDeps, bot: Bot, productId: number) {
   const list = await db.select().from(dropWatchers).where(and(eq(dropWatchers.productId, productId), isNull(dropWatchers.notifiedAt)));
   let sent = 0;
   for (const w of list) {
-    try {
-      await bot.api.sendMessage(w.userId, `<b>ДРОП ОТКРЫТ.</b> Вещдок <code>#${p.no}</code> — ${esc(p.title)}.\nПартия ${esc(p.batch)}. Изымайте, пока не изъяли другие.`, {
-        parse_mode: 'HTML',
-        reply_markup: new InlineKeyboard().webApp(`ОТКРЫТЬ ДЕЛО #${p.no}`, webappUrl(cfg, `?startapp=product_${p.id}`)),
-      });
-      sent++;
-    } catch (e) {
-      log.warn({ err: e, user: w.userId }, 'drop notify failed');
+    let settled = true; // delivered, or failed for good (the subject blocked the bot)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await bot.api.sendMessage(w.userId, `<b>ДРОП ОТКРЫТ.</b> Вещдок <code>#${p.no}</code> — ${esc(p.title)}.\nПартия ${esc(p.batch)}. Изымайте, пока не изъяли другие.`, {
+          parse_mode: 'HTML',
+          reply_markup: new InlineKeyboard().webApp(`ОТКРЫТЬ ДЕЛО #${p.no}`, webappUrl(cfg, `?startapp=product_${p.id}`)),
+        });
+        sent++;
+        break;
+      } catch (e) {
+        // 429: Telegram says how long to wait — wait and send again instead of losing the message
+        const wait = e instanceof GrammyError && e.error_code === 429 ? (e.parameters.retry_after ?? 1) : null;
+        if (wait === null || attempt === 5) {
+          log.warn({ err: e, user: w.userId }, 'drop notify failed');
+          settled = wait === null;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, wait * 1000));
+      }
     }
-    await db.update(dropWatchers).set({ notifiedAt: new Date() }).where(and(eq(dropWatchers.productId, productId), eq(dropWatchers.userId, w.userId)));
+    // still rate-limited after 5 tries: left unmarked rather than reported as notified
+    if (settled) await db.update(dropWatchers).set({ notifiedAt: new Date() }).where(and(eq(dropWatchers.productId, productId), eq(dropWatchers.userId, w.userId)));
     await new Promise((r) => setTimeout(r, 40));
   }
   return sent;

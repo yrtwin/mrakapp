@@ -22,7 +22,9 @@ export function startJobs(deps: BotDeps, bot: Bot | null, everyMs = 30_000) {
       const launched = await launchDueDrops(deps.db);
       for (const id of launched) {
         deps.log.info({ productId: id }, 'drop launched');
-        if (bot) await notifyDrop(deps, bot, id);
+        // not awaited: messaging thousands of watchers takes minutes, and reserves must keep expiring meanwhile.
+        // launchDueDrops returns each product once, so a drop is never announced twice
+        if (bot) void notifyDrop(deps, bot, id).catch((e) => deps.log.error({ err: e, productId: id }, 'drop notify failed'));
       }
       if (deps.cdek && ticks++ % Math.max(1, Math.round(120_000 / everyMs)) === 0) {
         await syncShipments(deps.db, deps.cdek, deps.log, async (o, note) => { if (bot) await notifyOrderUpdate(deps, bot, o, note); });
