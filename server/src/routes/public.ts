@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ApiBootstrap, CreateOrderResult } from '@mrak8/shared';
 import type { AppCtx } from '../app.js';
@@ -97,7 +97,8 @@ export const publicRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
   app.post<{ Params: { id: string } }>('/api/drops/:id/watch', async (req, reply) => {
     const { on } = z.object({ on: z.boolean() }).parse(req.body);
     const productId = Number(req.params.id);
-    const [p] = await db.select({ id: products.id }).from(products).where(eq(products.id, productId));
+    // only what the catalog shows: a draft must not answer differently from a product that does not exist
+    const [p] = await db.select({ id: products.id }).from(products).where(and(eq(products.id, productId), inArray(products.status, ['drop', 'live'])));
     if (!p) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Вещдок не найден' });
     if (on) await db.insert(dropWatchers).values({ productId, userId: req.tg!.user.id }).onConflictDoNothing();
     else await db.delete(dropWatchers).where(and(eq(dropWatchers.productId, productId), eq(dropWatchers.userId, req.tg!.user.id)));
@@ -120,7 +121,7 @@ export const publicRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
       if (!found || found.order.userId !== req.tg!.user.id) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Дело не найдено' });
       const pc = await preCheckout(db, found.order.payload, found.order.total * 100, 'RUB', cfg.RESERVE_MINUTES);
       if (!pc.ok) throw new OrderError('PRECHECKOUT', pc.error, 409);
-      const r = await markPaid(db, found.order.payload, { telegram: `dev-${Date.now()}`, provider: 'dev', totalAmount: found.order.total * 100 });
+      const r = await markPaid(db, found.order.payload, { telegram: `dev-${Date.now()}`, provider: 'dev', totalAmount: found.order.total * 100, currency: found.order.currency });
       if (r && !r.already && bot) {
         try {
           await bot.api.sendMessage(r.order.userId, receiptText(r.order, r.items), { parse_mode: 'HTML' });

@@ -22,7 +22,8 @@ export async function openDatabase(url: string, pgliteDir: string): Promise<Data
   if (url) {
     const { default: pg } = await import('pg');
     const { drizzle } = await import('drizzle-orm/node-postgres');
-    const pool = new pg.Pool({ connectionString: url, max: 10 });
+    // under a spike a request waits at most 5 s for a connection and a query runs at most 10 s, instead of queueing forever
+    const pool = new pg.Pool({ connectionString: url, max: 10, connectionTimeoutMillis: 5_000, statement_timeout: 10_000 });
     const db = drizzle(pool, { schema });
     return { db, kind: 'postgres', close: () => pool.end() };
   }

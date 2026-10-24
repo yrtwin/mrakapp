@@ -49,7 +49,7 @@ export function registerDj(bot: Bot, deps: BotDeps) {
   bot.callbackQuery(/^dj:(del|up|noop):(\d+)$/, async (c) => {
     if (!isAdmin(c.from.id)) return c.answerCallbackQuery({ text: 'Только для дежурных' });
     const [, act, id] = c.match;
-    if (act === 'del') await removeTrack(db, Number(id));
+    if (act === 'del') await removeTrack(cfg, db, Number(id));
     if (act === 'up') await moveUp(db, Number(id));
     await c.answerCallbackQuery(act === 'del' ? { text: 'Трек удалён' } : act === 'up' ? { text: 'Поднят выше' } : {});
     if (act === 'noop') return;

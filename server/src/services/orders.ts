@@ -98,7 +98,8 @@ export async function createOrder(db: DB, user: { id: number; subjectNo: string 
     const rows: Omit<typeof orderItems.$inferInsert, 'orderId'>[] = [];
     for (const l of lines) {
       const p = prods.find((x) => x.id === l.productId);
-      if (!p || p.status !== 'live') throw new OrderError('NOT_FOR_SALE', `Вещдок ${p ? '#' + p.no : ''} не продаётся`.trim(), 409);
+      // a draft's number is not public yet: it fails like an unknown product
+      if (!p || p.status !== 'live') throw new OrderError('NOT_FOR_SALE', `Вещдок ${p && p.status !== 'draft' ? '#' + p.no : ''} не продаётся`.replace('  ', ' '), 409);
       const s = sizes.find((x) => x.productId === p.id && x.label === l.size);
       if (!s) throw new OrderError('NO_SIZE', `Размер ${l.size} не найден`, 409);
       if (!(await reserve(tx, s.id, l.qty))) throw new OrderError('OUT_OF_STOCK', `${p.title} / ${l.size} — изъят другим субъектом`, 409);
@@ -183,17 +184,19 @@ export async function preCheckout(db: DB, payload: string, totalAmount: number, 
   });
 }
 
-export interface PaidResult { order: OrderRow; items: OrderItemRow[]; already: boolean; oversold: boolean }
+export interface PaidResult { order: OrderRow; items: OrderItemRow[]; already: boolean; oversold: boolean; mismatch: boolean }
 
 /** successful_payment: idempotent (telegram_payment_charge_id is unique, status flips once) */
-export async function markPaid(db: DB, payload: string, charge: { telegram: string; provider: string; totalAmount: number }): Promise<PaidResult | null> {
+export async function markPaid(db: DB, payload: string, charge: { telegram: string; provider: string; totalAmount: number; currency: string }): Promise<PaidResult | null> {
   return db.transaction(async (tx) => {
     const [o] = await tx.select().from(orders).where(eq(orders.payload, payload)).for('update');
     if (!o) return null;
     const items = await tx.select().from(orderItems).where(eq(orderItems.orderId, o.id));
     if (o.telegramChargeId || o.status === 'paid' || o.status === 'assembled' || o.status === 'shipped' || o.status === 'delivered') {
-      return { order: o, items, already: true, oversold: false };
+      return { order: o, items, already: true, oversold: false, mismatch: false };
     }
+    // pre_checkout checked the amount; the money is taken either way, so a mismatch is paid but flagged to the admins
+    const mismatch = charge.totalAmount !== o.total * 100 || charge.currency !== o.currency;
     const held = o.status === 'pending';
     let oversold = false;
     for (const it of items) {
@@ -214,7 +217,7 @@ export async function markPaid(db: DB, payload: string, charge: { telegram: stri
       .set({ status: 'paid', paidAt: new Date(), telegramChargeId: charge.telegram, providerChargeId: charge.provider, reservedUntil: null, updatedAt: new Date() })
       .where(eq(orders.id, o.id))
       .returning();
-    return { order: paid, items, already: false, oversold };
+    return { order: paid, items, already: false, oversold, mismatch };
   });
 }
 

@@ -1,19 +1,21 @@
 /* Regression tests for SECURITY_AUDIT.md: each one failed before its fix. */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { ApiBootstrap } from '@mrak8/shared';
+import { subjectNo, type ApiBootstrap } from '@mrak8/shared';
 import { buildApp } from '../src/app.js';
 import { signInitData } from '../src/auth.js';
-import { createBot, notifyDrop } from '../src/bot/index.js';
+import { createBot, notifyDrop, setupBot } from '../src/bot/index.js';
 import { loadConfig, type Config } from '../src/config.js';
 import { migrateDatabase, openDatabase, type Database } from '../src/db/index.js';
-import { orders } from '../src/db/schema.js';
+import { orders, users } from '../src/db/schema.js';
 import { startJobs } from '../src/jobs.js';
 import { seed } from '../src/db/seed.js';
+import { createCdek } from '../src/services/cdek.js';
+import { addTrack } from '../src/services/dj.js';
 import { createStorage } from '../src/services/storage.js';
 import { startFakeBotApi } from './fake-bot-api.js';
 
@@ -222,6 +224,115 @@ describe('F-09 database role', () => {
     expect(compose).toContain('/docker-entrypoint-initdb.d/');
     expect(compose).not.toMatch(/PASSWORD:-/);
     expect(readFileSync(new URL('../../docker/db-init.sh', import.meta.url), 'utf8')).toMatch(/CREATE ROLE mrak8 .*NOSUPERUSER/);
+  });
+});
+
+describe('F-10 bot start', () => {
+  it('menu buttons for every known subject are synced in the background', async () => {
+    const { cfg, db, bot, api } = await makeApp({ WEBAPP_URL: 'https://shop.example', PUBLIC_URL: 'https://shop.example' }, { botMode: 'polling' });
+    await db.insert(users).values(Array.from({ length: 40 }, (_, i) => ({ id: 8000 + i, firstName: 'u', subjectNo: subjectNo(8000 + i) })));
+    api!.slow.setChatMenuButton = 50;
+    const t = Date.now();
+    try {
+      await setupBot({ cfg, db, storage: createStorage(cfg), log: silent }, bot!, 'polling');
+      expect(Date.now() - t).toBeLessThan(1000); // 40 subjects × 50 ms would be 2 s when awaited
+    } finally {
+      delete api!.slow.setChatMenuButton;
+    }
+  });
+});
+
+describe('F-11 malformed ids', () => {
+  it('answer 404, not a database error', async () => {
+    const { app } = await makeApp();
+    const cases = [['GET', '/api/products/abc'], ['GET', '/api/products/1.5'], ['GET', '/api/products/99999999999'], ['POST', '/api/drops/abc/watch'], ['GET', '/api/orders/%00'], ['POST', '/api/orders/x/cancel'], ['GET', '/dj/abc']] as const;
+    for (const [method, url] of cases) {
+      const r = await app.inject({ method, url, headers: tma(7060), payload: method === 'POST' ? { on: true } : undefined });
+      expect(r.statusCode, url).toBe(404);
+    }
+  });
+});
+
+describe('F-12 drafts stay invisible', () => {
+  it('neither the watch route nor an order error reveals a draft', async () => {
+    const { app } = await makeApp();
+    const no = String(1000 + Math.floor(Math.random() * 8999));
+    const created = await app.inject({ method: 'POST', url: '/api/admin/products', headers: tma(ADMIN), payload: { no, slug: `draft-${no}`, title: 'DRAFT', category: 'tee', price: 1000, status: 'draft', sizes: [{ label: 'M', stock: 5, heightMin: null, heightMax: null, length: null, width: null, sleeve: null }] } });
+    const draft = created.json().id;
+    expect((await app.inject({ method: 'POST', url: `/api/drops/${draft}/watch`, headers: tma(7061), payload: { on: true } })).statusCode).toBe(404);
+    const o = await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7061), payload: { items: [{ productId: draft, size: 'M', qty: 1 }], protocol } });
+    expect(o.statusCode).toBe(409);
+    expect(o.json().message).not.toContain(no);
+  });
+});
+
+describe('F-13 security headers', () => {
+  it('nosniff and referrer policy everywhere, HSTS in production over https', async () => {
+    const { app } = await makeApp({ NODE_ENV: 'production', BOT_MODE: 'polling', PUBLIC_URL: 'https://shop.example', WEBAPP_URL: 'https://shop.example' });
+    const r = await app.inject({ method: 'GET', url: '/api/health' });
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(r.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+    expect(r.headers['strict-transport-security']).toMatch(/max-age=\d+/);
+  });
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)('F-14 database timeouts (Postgres)', () => {
+  it('queries are cut off instead of hanging', async () => {
+    const { db } = await makeApp({}, { databaseUrl: process.env.TEST_DATABASE_URL });
+    const r = await db.execute('show statement_timeout');
+    expect((r.rows[0] as { statement_timeout: string }).statement_timeout).toBe('10s');
+  });
+});
+
+describe('F-15 DJ files', () => {
+  it('concurrent first plays download once; a removed track leaves no file behind', async () => {
+    const { app, cfg, db, bot, api } = await makeApp({}, { botMode: 'polling' });
+    const t = (await addTrack(db, { file_id: 'F15', file_unique_id: 'U15', title: 'T' }))!;
+    const before = api!.of('getFile').length;
+    const plays = await Promise.all(Array.from({ length: 5 }, () => app.inject({ method: 'GET', url: `/dj/${t.id}` })));
+    expect(plays.map((p) => p.statusCode)).toEqual([200, 200, 200, 200, 200]);
+    expect(api!.of('getFile').length - before).toBe(1);
+    const file = join(cfg.MEDIA_DIR, 'dj', 'U15.mp3');
+    expect(existsSync(file)).toBe(true);
+    const del = { id: 'q', from: { id: ADMIN, is_bot: false, first_name: 'a' }, chat_instance: 'c', data: `dj:del:${t.id}`, message: { message_id: 1, date: 0, chat: { id: ADMIN, type: 'private', first_name: 'a' }, text: 'DJ SET' } };
+    await bot!.handleUpdate({ update_id: 1, callback_query: del } as never);
+    expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe('F-16 payment cross-check', () => {
+  it('a payment that differs from the order is flagged to the admins', async () => {
+    const { app, db, bot, api, product } = await makeApp({ ADMIN_CHAT_ID: '-100777' }, { botMode: 'polling' });
+    const p = await product();
+    const placed = await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7070), payload: { items: [{ productId: p.id, size: 'M', qty: 1 }], protocol } });
+    const [o] = await db.select().from(orders).where(eq(orders.no, placed.json().order.no));
+    const sp = { currency: 'RUB', total_amount: 100, invoice_payload: o.payload, telegram_payment_charge_id: 'tg-f16', provider_payment_charge_id: 'pr-f16' };
+    await bot!.handleUpdate({ update_id: 2, message: { message_id: 2, date: 0, chat: { id: 7070, type: 'private', first_name: 's' }, from: { id: 7070, is_bot: false, first_name: 's' }, successful_payment: sp } } as never);
+    const toAdmins = api!.of('sendMessage').filter((c) => String(c.body.chat_id) === '-100777').at(-1)!;
+    expect(toAdmins.body.text).toContain('СУММА НЕ СОВПАЛА');
+  });
+});
+
+describe('F-18 CDEK waybill link', () => {
+  it('the CDEK token is never sent outside cdek.ru', async () => {
+    const cdek = createCdek(loadConfig({ NODE_ENV: 'test', CDEK_MODE: 'test' }))!;
+    const real = globalThis.fetch;
+    const seen: string[] = [];
+    const json = (j: unknown) => new Response(JSON.stringify(j), { status: 200, headers: { 'content-type': 'application/json' } });
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.includes('/oauth/token')) return json({ access_token: 'secret-token', expires_in: 3600 });
+      if (url.endsWith('/print/orders')) return json({ entity: { uuid: 'p1' } });
+      if (url.includes('/print/orders/p1')) return json({ entity: { url: 'https://evil.example/waybill.pdf' } });
+      return new Response('%PDF', { status: 200 });
+    }) as typeof fetch;
+    try {
+      await expect(cdek.waybill('order-uuid')).rejects.toThrow(/cdek\.ru/);
+      expect(seen.some((u) => u.includes('evil.example'))).toBe(false);
+    } finally {
+      globalThis.fetch = real;
+    }
   });
 });
 

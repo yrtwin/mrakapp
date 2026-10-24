@@ -119,6 +119,9 @@ export function createCdek(cfg: Config): Cdek | null {
         await new Promise((ok) => setTimeout(ok, 1000));
         const st = await call<{ entity?: { url?: string } }>('GET', `/print/orders/${req.entity.uuid}`);
         if (st.entity?.url) {
+          // the bearer token goes only to CDEK itself, whatever url the response names
+          const u = new URL(st.entity.url);
+          if (u.protocol !== 'https:' || !/(^|\.)cdek\.ru$/.test(u.hostname)) throw new CdekError('СДЭК дал ссылку на накладную не на cdek.ru');
           const pdf = await fetch(st.entity.url, { headers: { authorization: `Bearer ${await auth()}` }, signal: AbortSignal.timeout(20_000) });
           if (!pdf.ok) throw new CdekError(`накладная не скачалась (${pdf.status})`);
           return Buffer.from(await pdf.arrayBuffer());

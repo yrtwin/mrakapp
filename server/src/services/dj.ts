@@ -1,7 +1,7 @@
 /* DJ set. The audio lives in Telegram: an admin sends mp3s to the bot, the DB keeps only file_id + title.
    On the first play the server downloads a track once into MEDIA_DIR/dj and streams it from there (Range too). */
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import https from 'node:https';
 import http from 'node:http';
 import { resolve } from 'node:path';
@@ -32,7 +32,12 @@ export async function addTrack(db: DB, a: { file_id: string; file_unique_id: str
   return row ?? null;
 }
 
-export const removeTrack = (db: DB, id: number) => db.delete(djTracks).where(eq(djTracks.id, id)).returning();
+/** the cached mp3 goes with the track: a removed track is not served or kept on disk */
+export async function removeTrack(cfg: Config, db: DB, id: number) {
+  const rows = await db.delete(djTracks).where(eq(djTracks.id, id)).returning();
+  for (const t of rows) await rm(resolve(cfg.MEDIA_DIR, 'dj', `${t.fileUniqueId}.mp3`), { force: true });
+  return rows;
+}
 
 /** swap with the track above and renumber the playlist */
 export async function moveUp(db: DB, id: number) {
@@ -56,11 +61,18 @@ const download = (url: string, proxy: string) =>
     req.on('error', no);
   });
 
+const inFlight = new Map<string, Promise<string>>(); // track → its running download: concurrent first plays share one
+
 /** local copy of a track: downloaded from Telegram once (Bot API serves files up to 20 MB) */
-export async function cachedFile(cfg: Config, bot: Bot, t: DjTrackRow) {
+export function cachedFile(cfg: Config, bot: Bot, t: DjTrackRow) {
+  const path = resolve(cfg.MEDIA_DIR, 'dj', `${t.fileUniqueId}.mp3`);
+  if (existsSync(path)) return Promise.resolve(path);
+  if (!inFlight.has(path)) inFlight.set(path, fetchTrack(cfg, bot, t, path).finally(() => inFlight.delete(path)));
+  return inFlight.get(path)!;
+}
+
+async function fetchTrack(cfg: Config, bot: Bot, t: DjTrackRow, path: string) {
   const dir = resolve(cfg.MEDIA_DIR, 'dj');
-  const path = resolve(dir, `${t.fileUniqueId}.mp3`);
-  if (existsSync(path)) return path;
   const f = await bot.api.getFile(t.fileId);
   if (!f.file_path) throw new Error('telegram gave no file path');
   const buf = await download(`${cfg.BOT_API_ROOT.replace(/\/$/, '')}/file/bot${cfg.BOT_TOKEN}/${f.file_path}`, cfg.TELEGRAM_PROXY);

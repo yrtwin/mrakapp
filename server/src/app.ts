@@ -65,6 +65,17 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
 
   app.decorateRequest('tg', null);
 
+  // malformed ids are «not found», not a database error: :id / :imageId are int4 keys, :no is MRK-<digits>
+  app.addHook('preValidation', async (req, reply) => {
+    const bad = Object.entries((req.params ?? {}) as Record<string, string>).some(([k, v]) => (/(^id|Id)$/.test(k) && !/^[1-9]\d{0,8}$/.test(v)) || (k === 'no' && !/^MRK-\d{1,12}$/.test(v)));
+    if (bad) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Не найдено' });
+  });
+
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('x-content-type-options', 'nosniff').header('referrer-policy', 'strict-origin-when-cross-origin');
+    if (cfg.isProd && cfg.PUBLIC_URL.startsWith('https://')) reply.header('strict-transport-security', 'max-age=31536000');
+  });
+
   // ponytail: fixed one-minute windows in this process' memory — the shop runs as one process (see jobs.ts); Redis if it scales out
   const hits = new Map<string, { n: number; until: number }>();
   const seen = new Map<number, number>(); // subject → when its users row was last refreshed

@@ -78,14 +78,15 @@ export function createBot(deps: BotDeps) {
 
   bot.on('message:successful_payment', async (c) => {
     const sp = c.message.successful_payment;
-    const r = await markPaid(db, sp.invoice_payload, { telegram: sp.telegram_payment_charge_id, provider: sp.provider_payment_charge_id, totalAmount: sp.total_amount });
+    const r = await markPaid(db, sp.invoice_payload, { telegram: sp.telegram_payment_charge_id, provider: sp.provider_payment_charge_id, totalAmount: sp.total_amount, currency: sp.currency });
     if (!r) {
       log.error({ payload: sp.invoice_payload }, 'successful_payment for unknown order');
       return;
     }
     if (r.already) return; // repeated update: already handled
     await c.reply(receiptText(r.order, r.items), { parse_mode: 'HTML', reply_markup: openKb('ОТКРЫТЬ ДЕЛО', `?startapp=order_${r.order.no}`) });
-    await notifyAdmins(deps, bot, r.order, r.items, r.oversold);
+    if (r.mismatch) log.error({ no: r.order.no, paid: sp.total_amount, currency: sp.currency }, 'payment amount differs from the order');
+    await notifyAdmins(deps, bot, r.order, r.items, r.oversold, r.mismatch ? sp.total_amount / 100 : undefined);
     if (deps.cdek && r.order.cdek) await registerShipment(db, deps.cdek, log, r.order, r.items);
   });
 
@@ -93,11 +94,12 @@ export function createBot(deps: BotDeps) {
   return bot;
 }
 
-export async function notifyAdmins(deps: BotDeps, bot: Bot, order: OrderRow, items: OrderItemRow[], oversold = false) {
+export async function notifyAdmins(deps: BotDeps, bot: Bot, order: OrderRow, items: OrderItemRow[], oversold = false, paidInstead?: number) {
   const { cfg, log } = deps;
   if (!cfg.ADMIN_CHAT_ID) return;
   const text = [
     `${oversold ? '⚠️ ПЕРЕПРОДАЖА · ' : ''}<b>НОВОЕ ДЕЛО</b> <code>#${order.no}</code> · ${formatRub(order.total)}`,
+    paidInstead !== undefined ? `⚠️ СУММА НЕ СОВПАЛА: оплачено ${formatRub(paidInstead)} — проверьте платёж в кабинете провайдера` : '',
     `SUBJECT #${order.subjectNo} · ${esc(order.name)} · ${esc(order.phone)}`,
     `${esc(order.deliveryTitle)}${order.address ? ': ' + esc(order.address) : ''}`,
     ...items.map((i) => `— ${esc(i.title)} / ${i.sizeLabel} ×${i.qty}`),
@@ -231,6 +233,7 @@ export async function syncMenus(deps: BotDeps, bot: Bot, on = true) {
     await bot.api.setChatMenuButton({ chat_id: id, menu_button: open ? menuButton(cfg) : { type: 'default' } }).catch(() => {});
     if (open) menuFor.set(id, cfg.WEBAPP_URL);
     else menuFor.delete(id);
+    await new Promise((r) => setTimeout(r, 40)); // well under Telegram's ~30 requests a second
   }
 }
 
@@ -242,7 +245,8 @@ export async function setupBot(deps: BotDeps, bot: Bot, mode: 'webhook' | 'polli
     { command: 'admin', description: 'Control room (для дежурных)' },
   ]);
   const local = cfg.webAppButtons && cfg.webAppLocal;
-  await syncMenus(deps, bot);
+  // every known subject's button, one by one: in the background, so a big user base does not hold up the start
+  void syncMenus(deps, bot).catch((e) => log.warn({ err: e }, 'menu sync failed'));
   // buttons in messages sent at an old address (a tunnel reconnected, or the shop restarted with a new one)
   if (cfg.webAppButtons && !local) void repointAppButtons(bot, cfg, deps.db, log).catch((e) => log.warn({ err: e }, 'repoint failed'));
   if (cfg.webAppButtons && !local) {
