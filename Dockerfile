@@ -21,9 +21,12 @@ COPY package.json package-lock.json ./
 COPY shared/package.json shared/
 COPY server/package.json server/
 COPY web/package.json web/
+# ffmpeg decodes DJ set tracks for the beat/key analysis (server/tools/dj-analyze.mjs)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN npm ci --omit=dev -w server && npm cache clean --force
 COPY --from=build /app/server/dist server/dist
 COPY server/drizzle server/drizzle
+COPY server/tools server/tools
 COPY --from=build /app/web/dist web/dist
 # brand photos for the first-run seed of product #001
 COPY mrakl-zip-front.jpg mrakl-zip-back.jpg ./

@@ -7,6 +7,7 @@ import { ALLOWED_UPDATES, createBot, setupBot, syncMenus } from './bot/index.js'
 import { buildApp } from './app.js';
 import { startJobs } from './jobs.js';
 import { createCdek } from './services/cdek.js';
+import { analysePending } from './services/djAnalyze.js';
 import { followPublicUrl } from './publicUrl.js';
 
 async function main() {
@@ -34,6 +35,7 @@ async function main() {
   if (bot) {
     await bot.init();
     try { await setupBot(deps, bot, mode as 'webhook' | 'polling'); } catch (e) { log.warn({ err: e }, 'bot setup failed'); }
+    void analysePending(cfg, db, bot, log); // DJ tracks still without a beat grid
     if (mode === 'polling') void bot.start({ allowed_updates: [...ALLOWED_UPDATES], onStart: (me) => log.info(`bot @${me.username} polling`) });
   }
   const stopJobs = startJobs(deps, bot);

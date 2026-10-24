@@ -18,7 +18,7 @@ export type DjTrackRow = typeof djTracks.$inferSelect;
 
 export const listTracks = (db: DB) => db.select().from(djTracks).orderBy(asc(djTracks.position), asc(djTracks.id));
 
-export const toApiTracks = (rows: DjTrackRow[]): ApiDjTrack[] => rows.map((t) => ({ id: t.id, title: t.title, performer: t.performer, duration: t.duration }));
+export const toApiTracks = (rows: DjTrackRow[]): ApiDjTrack[] => rows.map((t) => ({ id: t.id, title: t.title, performer: t.performer, duration: t.duration, mix: t.mix ?? null }));
 
 /** a sent audio becomes the last track; the same file sent twice is not duplicated */
 export async function addTrack(db: DB, a: { file_id: string; file_unique_id: string; title?: string; performer?: string; file_name?: string; duration?: number; file_size?: number }) {
@@ -57,7 +57,7 @@ const download = (url: string, proxy: string) =>
   });
 
 /** local copy of a track: downloaded from Telegram once (Bot API serves files up to 20 MB) */
-async function cachedFile(cfg: Config, bot: Bot, t: DjTrackRow) {
+export async function cachedFile(cfg: Config, bot: Bot, t: DjTrackRow) {
   const dir = resolve(cfg.MEDIA_DIR, 'dj');
   const path = resolve(dir, `${t.fileUniqueId}.mp3`);
   if (existsSync(path)) return path;

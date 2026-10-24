@@ -1,0 +1,1 @@
+ALTER TABLE "dj_tracks" ADD COLUMN "mix" jsonb;

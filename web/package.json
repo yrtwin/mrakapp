@@ -17,10 +17,10 @@
     "vite": "^8.3.4"
   },
   "dependencies": {
-    "@mrak8/shared": "^0.2.0",
     "@fontsource-variable/inter-tight": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@fontsource-variable/roboto-condensed": "^5.3.0",
+    "@mrak8/shared": "^0.2.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.0.15"

@@ -129,8 +129,10 @@ export function deepLink(base: string, param?: string) {
   return `${base}?${named ? 'startapp' : 'start'}=${encodeURIComponent(param)}`;
 }
 
-/** a DJ set track; the audio itself is at /dj/<id> */
-export interface ApiDjTrack { id: number; title: string; performer: string; duration: number }
+/** how a track mixes: tempo, first downbeat and end of audio (s), Camelot key, loudness (dBFS) */
+export interface DjMix { bpm: number; beat: number; end: number; key: string; db: number }
+/** a DJ set track; the audio itself is at /dj/<id>; `mix` is null until the server has analysed it */
+export interface ApiDjTrack { id: number; title: string; performer: string; duration: number; mix: DjMix | null }
 
 /* СДЭК: city from the suggest, a pickup point (ПВЗ), a price quote, what the subject chose */
 export type CdekMode = 'pvz' | 'door';

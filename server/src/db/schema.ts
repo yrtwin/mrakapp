@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, jsonb, pgEnum, pgTable, primaryKey, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
-import type { ApiHotspot, ApiProtoRow, CdekShipment } from '@mrak8/shared';
+import type { ApiHotspot, ApiProtoRow, CdekShipment, DjMix } from '@mrak8/shared';
 
 export const productStatus = pgEnum('product_status', ['draft', 'drop', 'live', 'soldout', 'archive']);
 export const category = pgEnum('category', ['hoodie', 'tee', 'acc', 'other']);
@@ -190,5 +190,7 @@ export const djTracks = pgTable('dj_tracks', {
   duration: integer('duration').notNull().default(0),
   size: integer('size').notNull().default(0),
   position: integer('position').notNull().default(0),
+  /** beat grid, key and loudness from services/djAnalyze.ts; null — not analysed (plays with a plain crossfade) */
+  mix: jsonb('mix').$type<DjMix>(),
   createdAt: ts('created_at').defaultNow().notNull(),
 });

@@ -1,20 +1,21 @@
 /* DJ set from the chat: an admin sends an mp3 to the bot → it joins the playlist; /dj lists, reorders, deletes. */
 import { InlineKeyboard, type Bot } from 'grammy';
 import { addTrack, listTracks, moveUp, removeTrack } from '../services/dj.js';
+import { analyseTrack } from '../services/djAnalyze.js';
 import type { BotDeps } from './index.js';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 export function registerDj(bot: Bot, deps: BotDeps) {
-  const { cfg, db } = deps;
+  const { cfg, db, log } = deps;
   const isAdmin = (id?: number) => !!id && cfg.ADMIN_IDS.includes(id);
 
   const playlist = async () => {
     const list = await listTracks(db);
     const kb = new InlineKeyboard();
     list.forEach((t, i) => {
-      kb.text(`${i + 1}. ${t.performer ? t.performer + ' — ' : ''}${t.title}`.slice(0, 60), `dj:noop:${t.id}`).row();
+      kb.text(`${i + 1}. ${t.performer ? t.performer + ' — ' : ''}${t.title}${t.mix ? ` · ${Math.round(t.mix.bpm)} ${t.mix.key}` : ''}`.slice(0, 64), `dj:noop:${t.id}`).row();
       if (i > 0) kb.text('⬆ выше', `dj:up:${t.id}`);
       kb.text('✖ удалить', `dj:del:${t.id}`).row();
     });
@@ -38,7 +39,11 @@ export function registerDj(bot: Bot, deps: BotDeps) {
     const t = await addTrack(db, a as Parameters<typeof addTrack>[1]);
     if (!t) return c.reply('Этот трек уже в DJ-сете.');
     const total = (await listTracks(db)).length;
-    await c.reply(`🎧 Добавлено в DJ-сет: <b>${esc(t.performer ? `${t.performer} — ${t.title}` : t.title)}</b>${t.duration ? ` (${mmss(t.duration)})` : ''}\nТреков в сете: ${total}. Плейлист — /dj`, { parse_mode: 'HTML' });
+    await c.reply(`🎧 Добавлено в DJ-сет: <b>${esc(t.performer ? `${t.performer} — ${t.title}` : t.title)}</b>${t.duration ? ` (${mmss(t.duration)})` : ''}\nТреков в сете: ${total}. Разбираю темп и тональность для сведения… Плейлист — /dj`, { parse_mode: 'HTML' });
+    // seconds of analysis in its own process; the chat gets the result when it is done
+    if (cfg.NODE_ENV !== 'test') void analyseTrack(cfg, db, bot, t.id)
+      .then((m) => c.reply(m ? `🎚 ${esc(t.title)}: ${Math.round(m.bpm)} BPM, ключ ${m.key} — будет сводиться в такт с соседними треками.` : `⚠️ ${esc(t.title)}: не смог разобрать темп — трек будет входить простым переходом.`, { parse_mode: 'HTML' }))
+      .catch((e) => log.warn({ err: e }, 'dj analysis failed'));
   });
 
   bot.callbackQuery(/^dj:(del|up|noop):(\d+)$/, async (c) => {
