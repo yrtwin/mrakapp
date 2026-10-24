@@ -5,13 +5,15 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: mrak8
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mrak8}
-      POSTGRES_DB: mrak8
+      # superuser for maintenance only; the app connects as the non-superuser role from docker/db-init.sh
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      APP_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./docker/db-init.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mrak8"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mrak8"]
       interval: 5s
       retries: 10
 
@@ -24,7 +26,7 @@ services:
     env_file: .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://mrak8:${POSTGRES_PASSWORD:-mrak8}@db:5432/mrak8
+      DATABASE_URL: postgres://mrak8:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/mrak8
       SERVE_WEB: "1"
       PUBLIC_URL: https://${DOMAIN}
       WEBAPP_URL: https://${DOMAIN}
