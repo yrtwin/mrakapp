@@ -66,7 +66,9 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
 
   // every /api call carries Telegram initData: Authorization: tma <initData>
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!req.url.startsWith('/api/') || req.url.startsWith('/api/health')) return;
+    // the matched route, not the raw url: the router decodes %XX, so /%61pi/… would slip past a check on req.url
+    const route = req.routeOptions.url ?? '';
+    if (!route.startsWith('/api/') || route === '/api/health') return;
     const h = req.headers.authorization || '';
     let user: TgUser | null = null;
     let startParam: string | undefined;

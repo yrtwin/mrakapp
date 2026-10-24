@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CATEGORY_LABEL, formatRub, type ApiHotspot, type ApiImage, type ApiProduct, type ApiSize } from '@mrak8/shared';
+import { CATEGORY_LABEL, formatRub, MAX_PER_SIZE, type ApiHotspot, type ApiImage, type ApiProduct, type ApiSize } from '@mrak8/shared';
 import { api } from '../lib/api';
 import { anim, done, flyToBag, reduced, scramble, slam } from '../lib/fx';
 import { go } from '../lib/router';
@@ -301,6 +301,7 @@ export function CaseScreen({ id }: { id: string }) {
     const sz = sizeOf(p, size);
     const held = cart.find((c) => c.productId === p.id && c.size === size)?.qty ?? 0;
     if (!sz || sz.available - held <= 0) { haptic.notify('error'); toast('РАЗМЕР ИЗЪЯТ ДРУГИМ СУБЪЕКТОМ'); return; }
+    if (held >= MAX_PER_SIZE) { haptic.notify('error'); toast(`НЕ БОЛЬШЕ ${MAX_PER_SIZE} ШТ ОДНОГО РАЗМЕРА`); return; }
     setBusy(true);
     const h = hero.current!;
     const face = (h.dataset.face as Side) || 'front';

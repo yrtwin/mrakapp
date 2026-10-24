@@ -87,6 +87,59 @@ describe('F-02 dev-only routes', () => {
   });
   it('DEV_AUTH is refused anywhere but localhost', () => {
     expect(() => loadConfig({ NODE_ENV: 'development', DEV_AUTH: '1', PUBLIC_URL: 'https://abc.trycloudflare.com' })).toThrow(/DEV_AUTH/);
+  });
+});
+
+describe('F-03 auth by the matched route', () => {
+  it('a percent-encoded /api path still needs initData', async () => {
+    const { app } = await makeApp();
+    for (const url of ['/%61pi/dj', '/%61pi/bootstrap', '/%61pi/orders', '/api/%64j']) {
+      expect((await app.inject({ method: 'GET', url })).statusCode, url).toBe(401);
+    }
+    expect((await app.inject({ method: 'GET', url: '/%61pi/dj', headers: tma(7002) })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/%61pi/health' })).statusCode).toBe(200);
+  });
+});
+
+/** a live product with one size and plenty of stock, made through the admin API */
+async function stockedProduct(app: FastifyInstance, stock: number) {
+  const no = String(1000 + Math.floor(Math.random() * 8999));
+  const r = await app.inject({ method: 'POST', url: '/api/admin/products', headers: tma(ADMIN), payload: { no, slug: `sec-${no}`, title: `SEC ${no}`, category: 'tee', price: 1000, status: 'live', sizes: [{ label: 'M', stock, heightMin: null, heightMax: null, length: null, width: null, sleeve: null }] } });
+  expect(r.statusCode).toBe(200);
+  const id = r.json().id as number;
+  const size = async () => (await app.inject({ method: 'GET', url: `/api/admin/products/${id}`, headers: tma(ADMIN) })).json().sizesAdmin[0] as { stock: number; reserved: number };
+  return { id, size };
+}
+
+describe('F-04 one subject cannot take a whole size', () => {
+  it('repeated lines are capped after merging', async () => {
+    const { app } = await makeApp();
+    const p = await stockedProduct(app, 100);
+    const items = Array.from({ length: 10 }, () => ({ productId: p.id, size: 'M', qty: 10 }));
+    const r = await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7010), payload: { items, protocol } });
+    expect(r.json()).toMatchObject({ error: 'TOO_MANY' });
+    const two = await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7010), payload: { items: [{ productId: p.id, size: 'M', qty: 2 }, { productId: p.id, size: 'M', qty: 2 }], protocol } });
+    expect(two.json()).toMatchObject({ error: 'TOO_MANY' });
+    expect((await p.size()).reserved).toBe(0);
+    expect((await app.inject({ method: 'POST', url: '/api/orders', headers: tma(7010), payload: { items: [{ productId: p.id, size: 'M', qty: 3 }], protocol } })).statusCode).toBe(200);
+  });
+});
+
+// a real race needs real connections: PGlite runs one transaction at a time. Set TEST_DATABASE_URL to an empty Postgres.
+describe.skipIf(!process.env.TEST_DATABASE_URL)('F-05 one pending order per subject (Postgres)', () => {
+  it('20 concurrent orders from one subject leave one reserve', async () => {
+    const { app } = await makeApp({}, { databaseUrl: process.env.TEST_DATABASE_URL });
+    const p = await stockedProduct(app, 50);
+    const subject = 7000 + Math.floor(Math.random() * 999);
+    await Promise.all(Array.from({ length: 20 }, () => app.inject({ method: 'POST', url: '/api/orders', headers: tma(subject), payload: { items: [{ productId: p.id, size: 'M', qty: 2 }], protocol } })));
+    const pending = (await app.inject({ method: 'GET', url: '/api/orders', headers: tma(subject) })).json().filter((o: { status: string }) => o.status === 'pending');
+    expect(pending.length).toBe(1);
+    expect((await p.size()).reserved).toBe(2);
+  });
+});
+
+describe('F-02 dev-only routes (localhost)', () => {
+  it('DEV_AUTH works on localhost', () => {
     expect(() => loadConfig({ NODE_ENV: 'development', DEV_AUTH: '1', PUBLIC_URL: 'http://localhost:8080' })).not.toThrow();
   });
 });

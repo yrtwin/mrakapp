@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { formatRub } from '@mrak8/shared';
+import { formatRub, MAX_PER_SIZE } from '@mrak8/shared';
 import { anim, done, strikePath, wait } from '../lib/fx';
 import { go } from '../lib/router';
 import { cartCount, cartTotal, productById, set, sizeOf, toast, useStore, type CartLine } from '../lib/store';
@@ -28,6 +28,7 @@ function Row({ line, i, onRemove }: { line: CartLine; i: number; onRemove: (row:
     const q2 = line.qty + d;
     if (q2 < 1) return onRemove(row.current!);
     if (sz && q2 > sz.available) { haptic.notify('error'); toast(`В НАЛИЧИИ ТОЛЬКО ${sz.available} ШТ`); return; }
+    if (q2 > MAX_PER_SIZE) { haptic.notify('error'); toast(`НЕ БОЛЬШЕ ${MAX_PER_SIZE} ШТ ОДНОГО РАЗМЕРА`); return; }
     haptic.select();
     set((s) => ({ cart: s.cart.map((r, k) => (k === i ? { ...r, qty: q2 } : r)) }));
   };

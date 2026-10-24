@@ -189,7 +189,7 @@ describe('payment flow (Telegram Payments + ЮKassa, test token)', () => {
 
 describe('stock and reserves', () => {
   it('refuses more than is left and seized sizes', async () => {
-    expect((await order(rival, [{ size: 'L', qty: 4 }])).json()).toMatchObject({ error: 'OUT_OF_STOCK' });
+    expect((await order(rival, [{ size: 'XS', qty: 3 }])).json()).toMatchObject({ error: 'OUT_OF_STOCK' });
     expect((await order(rival, [{ size: 'XL', qty: 1 }])).statusCode).toBe(409);
   });
 

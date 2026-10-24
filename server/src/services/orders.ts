@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { orderNo, type ApiAdminOrder, type ApiOrder, type CdekShipment, type CreateOrderBody } from '@mrak8/shared';
+import { MAX_PER_SIZE, orderNo, type ApiAdminOrder, type ApiOrder, type CdekShipment, type CreateOrderBody } from '@mrak8/shared';
 import type { DB } from '../db/index.js';
 import { deliveryMethods, orderItems, orders, productImages, products, productSizes } from '../db/schema.js';
 import { toApiImage } from './catalog.js';
@@ -78,8 +78,13 @@ export async function createOrder(db: DB, user: { id: number; subjectNo: string 
     merged.set(k, { ...it, qty: (prev?.qty ?? 0) + it.qty });
   }
   const lines = [...merged.values()];
+  // the per-line cap alone is bypassed by repeating a line — the limit applies to the merged quantity
+  const over = lines.find((l) => l.qty > MAX_PER_SIZE);
+  if (over) throw new OrderError('TOO_MANY', `Не больше ${MAX_PER_SIZE} шт. одного размера в одни руки`);
 
   return db.transaction(async (tx) => {
+    // one subject's orders run one at a time, so «one pending order per subject» holds under concurrent requests
+    await tx.execute(sql`select pg_advisory_xact_lock(${user.id})`);
     const [dv] = await tx.select().from(deliveryMethods).where(and(eq(deliveryMethods.key, body.protocol.delivery), eq(deliveryMethods.active, true)));
     if (!dv) throw new OrderError('BAD_DELIVERY', 'Способ этапирования недоступен');
     if (dv.needsAddress && !priced && body.protocol.address.length < 6) throw new OrderError('NO_ADDRESS', 'Укажите адрес доставки');

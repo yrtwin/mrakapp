@@ -29,7 +29,10 @@ export const CATEGORIES = ['hoodie', 'tee', 'acc', 'other'] as const;
 export type Category = (typeof CATEGORIES)[number];
 export const CATEGORY_LABEL: Record<Category, string> = { hoodie: 'ХУДИ', tee: 'ФУТБОЛКИ', acc: 'АКСЕССУАРЫ', other: 'ПРОЧЕЕ' };
 
-export const ORDER_STATUSES = ['pending', 'paid', 'assembled', 'shipped', 'delivered', 'cancelled', 'expired'] as const;
+/** units of one size a subject may take in one order: small batches, one subject must not hold a whole drop */
+export const MAX_PER_SIZE = 3;
+
+export const ORDER_STATUSES =['pending', 'paid', 'assembled', 'shipped', 'delivered', 'cancelled', 'expired'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
   pending: 'ОЖИДАЕТ ОПЛАТЫ',
