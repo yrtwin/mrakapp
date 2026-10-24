@@ -8,6 +8,7 @@ import { dropWatchers, productImages, products, users } from '../db/schema.js';
 import { jpegForTelegram } from '../services/media.js';
 import { repointAppButtons, trackAppButtons } from './appButtons.js';
 import { registerChatCatalog } from './catalog.js';
+import { registerDj } from './dj.js';
 import { markPaid, preCheckout, type OrderItemRow, type OrderRow } from '../services/orders.js';
 import type { Storage } from '../services/storage.js';
 import type { Cdek } from '../services/cdek.js';
@@ -51,6 +52,7 @@ export function createBot(deps: BotDeps) {
     await next();
   });
   registerChatCatalog(bot, deps); // /start, /catalog and the in-chat shop
+  registerDj(bot, deps); // admins: mp3 to the bot → DJ set, /dj
 
   bot.command('admin', async (c) => {
     if (!isAdmin(c.from?.id)) {
@@ -59,7 +61,7 @@ export function createBot(deps: BotDeps) {
       return;
     }
     const ok = canOpenWebApp(cfg, c.from?.id);
-    await c.reply('<b>CONTROL ROOM</b>\nПульт дежурного: товары, заказы, дропы, канал.' + (ok ? '' : '\nМини-апп откроется после настройки https-домена.'), { parse_mode: 'HTML', reply_markup: ok ? openKb('ОТКРЫТЬ CONTROL ROOM', '#/admin') : undefined });
+    await c.reply('<b>CONTROL ROOM</b>\nПульт дежурного: товары, заказы, дропы, канал. Музыка в мини-аппе — /dj' + (ok ? '' : '\nМини-апп откроется после настройки https-домена.'), { parse_mode: 'HTML', reply_markup: ok ? openKb('ОТКРЫТЬ CONTROL ROOM', '#/admin') : undefined });
   });
 
   bot.on('pre_checkout_query', async (c) => {

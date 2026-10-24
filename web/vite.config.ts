@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    proxy: { '/api': api, '/media': api },
+    proxy: { '/api': api, '/media': api, '/dj': api },
   },
   build: {
     target: ['es2020', 'safari15', 'chrome100'],

@@ -395,3 +395,27 @@ describe('СДЭК: priced by the server, handed over after payment, tracked', (
     expect(res.json().error).toBe('NO_PVZ');
   });
 });
+
+describe('DJ set: tracks live in Telegram', () => {
+  const audio = (from: { id: number; first_name: string }) => ({
+    update_id: updateId++,
+    message: {
+      message_id: 9, date: Math.floor(Date.now() / 1000), chat: { id: from.id, type: 'private' as const, first_name: from.first_name }, from: { ...from, is_bot: false },
+      audio: { file_id: 'AUDIO1', file_unique_id: 'UNI1', duration: 150, performer: 'VILLIAN, madk1d', title: 'ДИНАСТИЯ', file_size: 2_400_000 },
+    },
+  });
+  it('an admin’s mp3 joins the playlist, a buyer’s does not; the audio streams, with Range', async () => {
+    await bot.handleUpdate(audio(buyer));
+    expect((await app.inject({ method: 'GET', url: '/api/dj', headers: auth(buyer) })).json()).toEqual([]);
+    await bot.handleUpdate(audio(admin));
+    expect(api.of('sendMessage').at(-1)!.body.text).toContain('Добавлено в DJ-сет');
+    const list = (await app.inject({ method: 'GET', url: '/api/dj', headers: auth(buyer) })).json();
+    expect(list).toMatchObject([{ title: 'ДИНАСТИЯ', performer: 'VILLIAN, madk1d', duration: 150 }]);
+    const full = await app.inject({ method: 'GET', url: `/dj/${list[0].id}` });
+    expect([full.statusCode, full.body]).toEqual([200, 'ID3-fake-mp3-bytes']);
+    const part = await app.inject({ method: 'GET', url: `/dj/${list[0].id}`, headers: { range: 'bytes=0-2' } });
+    expect([part.statusCode, part.body, part.headers['content-range']]).toEqual([206, 'ID3', 'bytes 0-2/18']);
+    await bot.handleUpdate(audio(admin));
+    expect(api.of('sendMessage').at(-1)!.body.text).toContain('уже в DJ-сете');
+  });
+});

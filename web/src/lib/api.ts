@@ -1,4 +1,4 @@
-import type { ApiAdminDashboard, ApiAdminOrder, ApiAdminProduct, ApiAdminProductInput, ApiBootstrap, ApiDelivery, ApiImage, ApiOrder, CdekCity, CdekMode, CdekPoint, CdekQuote, CreateOrderBody, CreateOrderResult, OrderStatus } from '@mrak8/shared';
+import type { ApiAdminDashboard, ApiDjTrack, ApiAdminOrder, ApiAdminProduct, ApiAdminProductInput, ApiBootstrap, ApiDelivery, ApiImage, ApiOrder, CdekCity, CdekMode, CdekPoint, CdekQuote, CreateOrderBody, CreateOrderResult, OrderStatus } from '@mrak8/shared';
 import { devUserHeader, emulated, initData } from './telegram';
 
 const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -38,6 +38,7 @@ export const api = {
   order: (no: string) => call<ApiOrder>('GET', `/api/orders/${no}`),
   cancelOrder: (no: string) => call('POST', `/api/orders/${no}/cancel`),
   devPay: (no: string) => call<ApiOrder>('POST', `/api/dev/pay/${no}`),
+  dj: () => call<ApiDjTrack[]>('GET', '/api/dj'),
   cdekCities: (q: string) => call<CdekCity[]>('GET', `/api/cdek/cities?q=${encodeURIComponent(q)}`),
   cdekPoints: (city: number) => call<CdekPoint[]>('GET', `/api/cdek/points?city=${city}`),
   cdekQuote: (city: number, mode: CdekMode, qty: number) => call<CdekQuote>('GET', `/api/cdek/quote?city=${city}&mode=${mode}&qty=${qty}`),

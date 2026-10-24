@@ -8,6 +8,7 @@ import { dropWatchers, orders, products, users } from '../db/schema.js';
 import { getProduct, listDelivery, listProducts } from '../services/catalog.js';
 import { cancelOrder, createOrder, CreateOrderSchema, findOrderByNo, listUserOrders, markPaid, OrderError, preCheckout, setInvoiceLink, toApiOrders, type PricedDelivery } from '../services/orders.js';
 import { priceCdek, registerShipment } from '../services/shipping.js';
+import { listTracks, streamTrack, toApiTracks } from '../services/dj.js';
 import { buildInvoice } from '../services/payments.js';
 
 export const publicRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
@@ -23,6 +24,10 @@ export const publicRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
     const q = z.object({ city: z.coerce.number().int().positive(), mode: z.enum(['pvz', 'door']), qty: z.coerce.number().int().min(1).max(50).default(1) }).parse(req.query);
     return needCdek().quote(q.city, q.mode, q.qty);
   });
+
+  // DJ set: the playlist for the mini app, and the audio itself at a plain URL (<audio> sends no auth headers)
+  app.get('/api/dj', async () => toApiTracks(await listTracks(db)));
+  app.get<{ Params: { id: string } }>('/dj/:id', (req, reply) => streamTrack(cfg, db, bot, req, reply));
 
   app.get('/api/bootstrap', async (req): Promise<ApiBootstrap> => {
     const t = req.tg!;

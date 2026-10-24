@@ -179,3 +179,16 @@ export const appButtons = pgTable(
   },
   (t) => [primaryKey({ columns: [t.chatId, t.messageId] }), index('app_buttons_created').on(t.createdAt)],
 );
+
+/** DJ set: tracks live in Telegram (sent to the bot by an admin); only the file id and the title are stored */
+export const djTracks = pgTable('dj_tracks', {
+  id: serial('id').primaryKey(),
+  fileId: text('file_id').notNull(),
+  fileUniqueId: text('file_unique_id').notNull().unique(),
+  title: text('title').notNull(),
+  performer: text('performer').notNull().default(''),
+  duration: integer('duration').notNull().default(0),
+  size: integer('size').notNull().default(0),
+  position: integer('position').notNull().default(0),
+  createdAt: ts('created_at').defaultNow().notNull(),
+});

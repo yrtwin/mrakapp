@@ -14,6 +14,7 @@ export async function startFakeBotApi() {
     sendMessage: (b) => ({ message_id: ++mid, date: now(), chat: { id: Number(b.chat_id) || 0, type: 'private' }, text: b.text }),
     sendPhoto: (b) => ({ message_id: ++mid, date: now(), chat: { id: 0, type: 'channel', title: String(b.chat_id ?? '') }, photo: [] }),
     answerPreCheckoutQuery: () => true,
+    getFile: (b) => ({ file_id: b.file_id, file_unique_id: 'u-' + b.file_id, file_path: 'music/file_1.mp3' }),
     savePreparedInlineMessage: () => ({ id: 'prep-1', expiration_date: now() + 3600 }),
   };
   const read = async (req: IncomingMessage) => {
@@ -22,6 +23,7 @@ export async function startFakeBotApi() {
     return Buffer.concat(chunks);
   };
   const server = createServer(async (req, res) => {
+    if ((req.url || '').startsWith('/file/')) { res.end(Buffer.from('ID3-fake-mp3-bytes')); return; } // Bot API file download
     // test environment calls look like /bot<token>/test/<method>
     const [, test, method = ''] = (req.url || '').match(/^\/bot[^/]+\/(test\/)?(\w+)/) ?? [];
     const raw = await read(req);

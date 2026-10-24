@@ -129,6 +129,9 @@ export function deepLink(base: string, param?: string) {
   return `${base}?${named ? 'startapp' : 'start'}=${encodeURIComponent(param)}`;
 }
 
+/** a DJ set track; the audio itself is at /dj/<id> */
+export interface ApiDjTrack { id: number; title: string; performer: string; duration: number }
+
 /* СДЭК: city from the suggest, a pickup point (ПВЗ), a price quote, what the subject chose */
 export type CdekMode = 'pvz' | 'door';
 export interface CdekCity { code: number; name: string }
