@@ -52,7 +52,8 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
   const app = Fastify({
     logger: cfg.NODE_ENV === 'test' ? false : { level: 'info', transport: cfg.isProd ? undefined : { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname', singleLine: true } } },
     bodyLimit: 1_048_576,
-    trustProxy: true,
+    // X-Forwarded-For only from a proxy on this machine or the private network (Caddy in docker): clients cannot pick their IP
+    trustProxy: 'loopback,linklocal,uniquelocal',
   });
 
   const origins = [cfg.WEBAPP_URL, ...cfg.CORS_ORIGINS.split(',')].map((s) => s.trim()).filter(Boolean).map((u) => { try { return new URL(u).origin; } catch { return u; } });
@@ -64,10 +65,29 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
 
   app.decorateRequest('tg', null);
 
+  // ponytail: fixed one-minute windows in this process' memory — the shop runs as one process (see jobs.ts); Redis if it scales out
+  const hits = new Map<string, { n: number; until: number }>();
+  const seen = new Map<number, number>(); // subject → when its users row was last refreshed
+  const sweep = setInterval(() => {
+    const now = Date.now();
+    for (const [k, h] of hits) if (h.until <= now) hits.delete(k);
+    for (const [id, at] of seen) if (at < now - 300_000) seen.delete(id);
+  }, 60_000);
+  sweep.unref();
+  app.addHook('onClose', async () => clearInterval(sweep));
+  const limit = (reply: FastifyReply, key: string, max: number) => {
+    const now = Date.now();
+    const h = hits.get(key);
+    if (!h || h.until <= now) { hits.set(key, { n: 1, until: now + 60_000 }); return; }
+    if (++h.n <= max) return;
+    return reply.status(429).header('retry-after', Math.ceil((h.until - now) / 1000)).send({ error: 'RATE_LIMIT', message: 'Слишком часто. Подождите минуту.' });
+  };
+
   // every /api call carries Telegram initData: Authorization: tma <initData>
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
     // the matched route, not the raw url: the router decodes %XX, so /%61pi/… would slip past a check on req.url
     const route = req.routeOptions.url ?? '';
+    if (route === '/dj/:id') return limit(reply, `dj:${req.ip}`, 120); // public: the first play downloads the file
     if (!route.startsWith('/api/') || route === '/api/health') return;
     const h = req.headers.authorization || '';
     let user: TgUser | null = null;
@@ -83,8 +103,12 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
       if (!user || typeof user.id !== 'number') user = { id: 1, first_name: 'Dev', username: 'dev_subject' };
     }
     if (!user) return reply.status(401).send({ error: 'UNAUTHORIZED', message: 'Откройте мини-апп из Telegram' });
-    const sn = await upsertUser(db, user);
-    req.tg = { user, subjectNo: sn, isAdmin: cfg.ADMIN_IDS.includes(user.id), startParam };
+    // orders hold row locks and CDEK calls spend the contract's quota: tighter than the rest
+    const [bucket, max] = route === '/api/orders' && req.method === 'POST' ? ['order', 10] : route.startsWith('/api/cdek/') ? ['cdek', 60] : ['api', 300];
+    if (limit(reply, `${bucket}:${user.id}`, max)) return reply;
+    // the profile is written at most every 5 minutes, not on every call
+    if ((seen.get(user.id) ?? 0) < Date.now() - 300_000) { await upsertUser(db, user); seen.set(user.id, Date.now()); }
+    req.tg = { user, subjectNo: subjectNo(user.id), isAdmin: cfg.ADMIN_IDS.includes(user.id), startParam };
   });
 
   app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {

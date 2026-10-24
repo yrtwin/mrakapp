@@ -138,6 +138,25 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)('F-05 one pending order per subj
   });
 });
 
+describe('F-06 rate limits (and F-20 trusted proxies)', () => {
+  it('the 11th order in a minute is refused, other subjects are not affected', async () => {
+    const { app } = await makeApp();
+    const p = await stockedProduct(app, 100);
+    const place = (id: number) => app.inject({ method: 'POST', url: '/api/orders', headers: tma(id), payload: { items: [{ productId: p.id, size: 'M', qty: 1 }], protocol } });
+    for (let i = 0; i < 10; i++) expect((await place(7020)).statusCode).toBe(200);
+    const eleventh = await place(7020);
+    expect(eleventh.statusCode).toBe(429);
+    expect(Number(eleventh.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await place(7021)).statusCode).toBe(200);
+  });
+  it('the public audio route is limited per client IP, and a public client cannot pick its IP', async () => {
+    const { app } = await makeApp();
+    const hit = (i: number) => app.inject({ method: 'GET', url: '/dj/1', remoteAddress: '203.0.113.5', headers: { 'x-forwarded-for': `198.51.100.${i % 250}` } });
+    for (let i = 0; i < 120; i++) expect((await hit(i)).statusCode).not.toBe(429);
+    expect((await hit(120)).statusCode).toBe(429);
+  });
+});
+
 describe('F-02 dev-only routes (localhost)', () => {
   it('DEV_AUTH works on localhost', () => {
     expect(() => loadConfig({ NODE_ENV: 'development', DEV_AUTH: '1', PUBLIC_URL: 'http://localhost:8080' })).not.toThrow();
