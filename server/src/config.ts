@@ -79,6 +79,12 @@ const Schema = z.object({
 
 export type Config = z.infer<typeof Schema> & { isProd: boolean; mediaPublicUrl: string; botEnabled: boolean; testPayments: boolean; webAppButtons: boolean; webAppLocal: boolean };
 
+/** the .env.example placeholder is public: a webhook protected by it is not protected */
+const SECRET_PLACEHOLDER = 'change-me-to-a-long-random-string';
+/** Telegram allows A-Z a-z 0-9 _ - in secret_token; anything shorter than 32 chars is guessable */
+export const weakWebhookSecret = (s: string) => s.length < 32 || s.length > 256 || !/^[A-Za-z0-9_-]+$/.test(s) || s === SECRET_PLACEHOLDER;
+const isLocalUrl = (u: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(u);
+
 /** whether this user gets buttons that open the mini app */
 export const canOpenWebApp = (cfg: Config, userId?: number) => cfg.webAppButtons && (!cfg.webAppLocal || (!!userId && cfg.ADMIN_IDS.includes(userId)));
 
@@ -107,8 +113,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     const missing = ['BOT_TOKEN', 'WEBAPP_URL', 'PUBLIC_URL'].filter((k) => !(c as Record<string, unknown>)[k]);
     if (missing.length) throw new Error('Missing required env in production: ' + missing.join(', '));
     if (c.DEV_AUTH) throw new Error('DEV_AUTH must be off in production');
+    // without the secret anyone can post updates to /telegram/webhook as any user, the admins included
+    if (c.BOT_TOKEN && c.BOT_MODE !== 'polling' && c.BOT_MODE !== 'off' && weakWebhookSecret(c.WEBHOOK_SECRET)) {
+      throw new Error('WEBHOOK_SECRET must be 32–256 random chars [A-Za-z0-9_-] in production (openssl rand -hex 32)');
+    }
     if (!c.DATABASE_URL) console.warn('[config] DATABASE_URL is empty: using embedded PGlite in production is not recommended');
   }
+  // DEV_AUTH lets anyone act as anyone and pay without money: only on this computer, whatever NODE_ENV says
+  if (c.DEV_AUTH && c.NODE_ENV !== 'test' && !isLocalUrl(c.PUBLIC_URL)) throw new Error('DEV_AUTH=1 is only allowed with a localhost PUBLIC_URL');
   const mediaPublicUrl = (c.STORAGE_DRIVER === 's3' ? c.S3_PUBLIC_URL : c.MEDIA_PUBLIC_URL || `${c.PUBLIC_URL.replace(/\/$/, '')}/media`).replace(/\/$/, '');
   return {
     ...c,

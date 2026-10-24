@@ -246,7 +246,7 @@ export async function setupBot(deps: BotDeps, bot: Bot, mode: 'webhook' | 'polli
   }
   if (mode === 'webhook') {
     const url = `${cfg.PUBLIC_URL.replace(/\/$/, '')}/telegram/webhook`;
-    await bot.api.setWebhook(url, { secret_token: cfg.WEBHOOK_SECRET || undefined, allowed_updates: [...ALLOWED_UPDATES], drop_pending_updates: false });
+    await bot.api.setWebhook(url, { secret_token: cfg.WEBHOOK_SECRET, allowed_updates: [...ALLOWED_UPDATES], drop_pending_updates: false });
     log.info({ url }, 'webhook set');
   }
 }

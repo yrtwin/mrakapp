@@ -112,8 +112,9 @@ export const publicRoutes = (ctx: AppCtx) => async (app: FastifyInstance) => {
     return { id: prepared.id };
   });
 
-  /* local development without real money: emulate pre_checkout_query + successful_payment for an own pending order */
-  if (!cfg.isProd) {
+  /* local development without real money: emulate pre_checkout_query + successful_payment for an own pending order.
+     Only with DEV_AUTH (refused unless PUBLIC_URL is localhost): a missing NODE_ENV or a tunnel must not make orders free. */
+  if (!cfg.isProd && (cfg.DEV_AUTH || cfg.NODE_ENV === 'test')) {
     app.post<{ Params: { no: string } }>('/api/dev/pay/:no', async (req, reply) => {
       const found = await findOrderByNo(db, req.params.no);
       if (!found || found.order.userId !== req.tg!.user.id) return reply.status(404).send({ error: 'NOT_FOUND', message: 'Дело не найдено' });

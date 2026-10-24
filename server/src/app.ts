@@ -9,7 +9,7 @@ import { webhookCallback, type Bot } from 'grammy';
 import { ZodError } from 'zod';
 import { subjectNo } from '@mrak8/shared';
 import { AuthError, validateInitData, type TgUser } from './auth.js';
-import type { Config } from './config.js';
+import { weakWebhookSecret, type Config } from './config.js';
 import type { DB } from './db/index.js';
 import { users } from './db/schema.js';
 import { adminRoutes } from './routes/admin.js';
@@ -98,7 +98,8 @@ export async function buildApp(ctx: AppCtx): Promise<FastifyInstance> {
   app.get('/api/health', async () => ({ ok: true, bot: ctx.botMode, time: new Date().toISOString() }));
 
   if (bot && ctx.botMode === 'webhook') {
-    app.post('/telegram/webhook', webhookCallback(bot, 'fastify', { secretToken: cfg.WEBHOOK_SECRET || undefined }));
+    if (weakWebhookSecret(cfg.WEBHOOK_SECRET)) throw new Error('webhook mode needs a strong WEBHOOK_SECRET (openssl rand -hex 32)');
+    app.post('/telegram/webhook', webhookCallback(bot, 'fastify', { secretToken: cfg.WEBHOOK_SECRET }));
   }
 
   await app.register(publicRoutes(ctx));
